@@ -43,32 +43,60 @@ def get_contacts_container(height, width):
     return contacts
 
 
-def image_to_resistance_mask(uploaded_file, width, height):
-    image = np.frombuffer(uploaded_file.read(), np.uint8)
-    img = cv2.imdecode(image, cv2.IMREAD_GRAYSCALE) / 255.0  # normalize between 0 and 1
-    resized_img = cv2.resize(
-        img, (height, width)
-    )  # make sure it has the same size as the plate
-    return resized_img
-
-
 def solve_poisson(plate, resistances):
-    ny, nx = plate.shape
-    dx = 1.0  # grid spacing
-    mesh = Grid2D(dx=dx, dy=dx, nx=nx, ny=ny)
-    phi = CellVariable(name="solution variable", mesh=mesh, value=0.0)
-    X, Y = mesh.faceCenters
+    """
+    Solve the Poisson equation for the given plate and resistances by using FiPy.
+    The input plate and resistances are 2D numpy arrays.
+    Method:
+    1. Create a 2D grid with the same size as the plate
+    2. Create a CellVariable for the solution phi and the resistances D on the grid
+    3. Constrain the solution phi to the values of the plate at the boundaries of the grid
+    4. Solve the equation for phi using the ImplicitSourceTerm and DiffusionTerm
+    5. Return the solution phi as a 2D numpy array
+    Math for the Poisson equation:
+    - The Laplace operator is given by the DiffusionTerm
+    - The source term is given by the ImplicitSourceTerm
+    - The equation to solve is: div(D * grad(phi)) + S = 0
+    - D is the resistivity, S is the source term
+
+    :param plate:
+    :param resistances:
+    :return:
+    """
+    # Create a 2D grid with the same size as the plate
+    grid = Grid2D(
+        dx=1.0, dy=1.0, nx=plate.shape[1], ny=plate.shape[0]
+    )  # dx and dy are the grid spacings in x- and y-direction
+    # Create a CellVariable for the solution phi and the resistances D on the grid
+    phi = CellVariable(name="Electric Potential", mesh=grid, value=0.0)
+    D = CellVariable(name="Resistances", mesh=grid, value=resistances)
+    # Constrain the solution phi to the values of the plate at the boundaries of the grid
     phi.constrain(
-        plate.T.flatten(),
-        mesh.facesLeft | mesh.facesRight | mesh.facesTop | mesh.facesBottom,
+        plate, where=grid.facesTop | grid.facesBottom | grid.facesLeft | grid.facesRight
     )
-    D = CellVariable(name="resistivity", mesh=mesh, value=resistances.T.flatten())
-    eq = ImplicitSourceTerm(coeff=1.0) + DiffusionTerm(coeff=D)
-    eq.solve(var=phi, solver=LinearLUSolver(), dt=0.01)
-    return phi.value.reshape((ny, nx))
+    # Solve the equation for phi using the ImplicitSourceTerm and DiffusionTerm
+    eq = DiffusionTerm(coeff=D) - ImplicitSourceTerm(
+        coeff=1.0
+    )  # DiffusionTerm is the Laplace operator
+    eq.solve(var=phi, solver=LinearLUSolver())
+    # Return the solution phi as a 2D numpy array
+    return phi.value
 
 
-def plot_results(plate, contacts, width, height):
+def calculate_field(phi):
+    """
+    Calculate the electric field from the electric potential phi.
+    :param phi:
+    :return:
+    """
+    # Calculate the electric field from the electric potential phi
+    # The electric field is given by the negative gradient of the electric potential
+    # The gradient is calculated by the grad() method of the CellVariable
+    # The negative sign is added because the gradient points in the direction of the steepest descent
+    E = -phi.grad
+
+
+def plot_potential(plate, contacts, width, height):
     fig, ax = plt.subplots(figsize=(8, 7))
     y, x = np.mgrid[-height // 2 : height // 2, -width // 2 : width // 2]
     contour = ax.contourf(x, y, plate, cmap="hot")
@@ -81,21 +109,17 @@ def plot_results(plate, contacts, width, height):
     st.pyplot(fig)
 
 
-def generate_noise_image(height, width):
-    # Generate a random noise image
-    noise_img = np.random.normal(size=(height, width), loc=0.5, scale=0.1)
-    noise_img = np.clip(noise_img, 0, 1)  # Ensure values are between 0 and 1
-    return noise_img
-
-
-def adapt_mask(data, mask):
-    # Get the dimensions of the data
-    data_dim = data.shape
-
-    # Adapt the mask dimensions to match data
-    new_mask = np.resize(mask, data_dim)
-
-    return new_mask
+def plot_electric_field(plate, contacts, width, height):
+    E_x, E_y = calculate_field(plate)
+    fig, ax = plt.subplots(figsize=(8, 7))
+    y, x = np.mgrid[-height // 2 : height // 2, -width // 2 : width // 2]
+    ax.quiver(x, y, E_x, E_y, scale=5)
+    for contact in contacts:
+        ax.plot(contact[0] + width // 2, contact[1] + height // 2, "wo")
+    ax.set_xlim([-width // 2, width // 2])
+    ax.set_ylim([-height // 2, height // 2])
+    ax.set_title("Electric Field")
+    st.pyplot(fig)
 
 
 def main():
@@ -103,21 +127,8 @@ def main():
     width, height, accuracy = get_parameters_container()
     contacts = get_contacts_container(height, width)
     plate = configure_plate(width, height, contacts)
-    uploaded_file = st.file_uploader(
-        "Choose an image for the resistance mask", type=["jpg", "png"]
-    )
-    use_noise = st.checkbox("Use noise", value=False)
-    resistance_mask = None
+    plot_potential(plate, contacts, width, height)
+    plot_electric_field(plate, contacts, width, height)
 
-    if uploaded_file is not None:
-        st.image(uploaded_file, caption="Uploaded Image.", use_column_width=True)
-        resistance_mask = 1 - image_to_resistance_mask(uploaded_file, width, height)  # invert the greyscale
-        st.write("Image processed for resistance mask.")
 
-    elif use_noise:
-        st.info("No image uploaded, generating noise image.")
-        noise_image = generate_noise_image(height, width)
-        st.image(noise_image, caption="Generated noise image", use_column_width=True)
-        resistance_mask = 1 - noise_image  # invert the greyscale
-        adaptive_mask = adapt_mask(plate, resistance_mask)
-        st.write("Image processed for resistance mask.")
+main()

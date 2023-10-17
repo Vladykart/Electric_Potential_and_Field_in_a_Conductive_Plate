@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 from scipy.sparse import diags
 from scipy.sparse.linalg import inv, LinearOperator, cg
 
@@ -131,16 +132,17 @@ def calculate_field(plate):
 
 
 def plot_results(plate, x, y, E_x, E_y, contacts, width, height, title=''):
-    fig, ax = plt.subplots(1, 2, figsize=(16, 7))
+    fig, ax = plt.subplots(1, 2, figsize=(16, 9))
 
-    contour = ax[0].contourf(x, y, plate, cmap="hot")
+    # Left panel: Electric Potential Contour
+    contour = ax[0].contourf(x, y, plate, cmap="hot", norm=mpl.colors.LogNorm())  # Use LogNorm for normalization
     for contact in contacts:
         ax[0].plot(contact[0] + width // 2, contact[1] + height // 2, "wo")
     ax[0].set_xlim([-width // 2, width // 2])
     ax[0].set_ylim([-height // 2, height // 2])
-    fig.colorbar(contour, ax=ax[0], label="Potential")
     ax[0].set_title(f"Electric Potential ({title})")
 
+    # Right panel: Electric Field Quiver Plot
     ax[1].quiver(x, y, E_x, E_y, scale=5)
     for contact in contacts:
         ax[1].plot(contact[0] + width // 2, contact[1] + height // 2, "wo")
@@ -148,6 +150,10 @@ def plot_results(plate, x, y, E_x, E_y, contacts, width, height, title=''):
     ax[1].set_ylim([-height // 2, height // 2])
     ax[1].set_title(f"Electric Field ({title})")
 
+    # Add colorbar to the left panel for electric potential
+    cbar = fig.colorbar(contour, ax=ax[0], label="Potential (log scale)")
+
+    # Display the figure using Streamlit
     st.pyplot(fig)
 
 
@@ -227,7 +233,7 @@ def main():
 
     if st.button("Generate"):
         st.info("Solving Equation ...")
-        resistances = np.linspace(1, 10, num=5)  # or whatever range you're interested in
+        resistances = np.linspace(1, 0.1, num=10)  # or whatever range you're interested in
         for resistance in resistances:
             conductivity = 1 / resistance
             plate = solve_poisson(plate, conductivity, accuracy)
